@@ -1,65 +1,61 @@
 import pandas as pd
+import joblib
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sklearn.ensemble import RandomForestClassifier
-import joblib
-from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
+from sklearn.metrics import accuracy_score
+from xgboost import XGBClassifier
 
 # -------- 1. LOAD DATASET --------
-df = pd.read_csv("student-mat.csv", sep=";")
-if "G3" not in df.columns:
-    df = pd.read_csv("student-mat.csv", sep=",")
+# sep=None with engine='python' tells pandas to guess if it's ; or ,
+try:
+    df = pd.read_csv("student-mat.csv", sep=None, engine='python')
+    print(f"✅ Loaded file. Columns found: {df.columns.tolist()[:5]}...")
+except Exception as e:
+    print(f"❌ Error loading file: {e}")
+    exit()
 
-# -------- 2. TARGET FIX --------
+# -------- 2. TARGET & FEATURES --------
+if "G3" not in df.columns:
+    print("❌ Critical Error: 'G3' column not found. Check your CSV file.")
+    exit()
+
 df["pass"] = (df["G3"] >= 10).astype(int)
 
-# -------- 3. FEATURE ENGINEERING --------
-# I added G1, G2, Medu, Fedu, and higher for better accuracy
 features = [
     "G1", "G2", "absences", "failures", "studytime", 
     "Medu", "Fedu", "goout", "health", "higher", "sex", "school"
 ]
-
-# Ensure all selected features actually exist in the CSV
-features = [f for f in features if f in df.columns]
-
 X = df[features]
 y = df["pass"]
 
-# -------- 4. PREPROCESSING --------
+# -------- 3. PIPELINE --------
 cat_cols = X.select_dtypes(include="object").columns.tolist()
 num_cols = X.select_dtypes(exclude="object").columns.tolist()
 
 preprocessor = ColumnTransformer([
-    ("cat", OneHotEncoder(handle_unknown="ignore"), cat_cols),# perpose of OneHotEncoder is to convert words into int (1,0)
-    ("num", StandardScaler(), num_cols) # Added scaling for better stability
+    ("cat", OneHotEncoder(handle_unknown="ignore"), cat_cols),
+    ("num", StandardScaler(), num_cols)
 ])
 
-# -------- 5. THE MODEL --------
 pipeline = Pipeline([
-    ("preprocess", preprocessor),
-    ("model", RandomForestClassifier(
-        n_estimators=300, 
-        max_depth=12, 
-        class_weight="balanced", # Fixes the False Positives issue
-        random_state=42
+    ('preprocess', preprocessor),
+    ('model', XGBClassifier(
+        n_estimators=300,
+        max_depth=6,
+        learning_rate=0.1,
+        random_state=42,
+        eval_metric='logloss'
     ))
 ])
 
-# -------- 6. TRAIN & EVALUATE --------
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42
-)
-
+# -------- 4. TRAIN & SAVE --------
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 pipeline.fit(X_train, y_train)
 
-# -------- 7. RESULTS --------
 y_pred = pipeline.predict(X_test)
-print(f"New Accuracy: {accuracy_score(y_test, y_pred):.2%}")
-print("\nNew Confusion Matrix:\n", confusion_matrix(y_test, y_pred))
-print("\nClassification Report:\n", classification_report(y_test, y_pred))
+print(f"✅ Model Trained. Accuracy: {accuracy_score(y_test, y_pred):.2%}")
 
 joblib.dump(pipeline, "model.joblib")
-print("\nModel saved with improved features!")
+print("✅ Saved as model.joblib")
